@@ -41,7 +41,7 @@ Keys:
   [     Rotate byte left
   ]     Rotate byte right
 
-  -     Save cursor byte to temporary
-  =     Set cursor byte from temporary
+  -     Copy byte  (Save cursor byte to temporary)
+  =     Paste byte (Set cursor byte from temporary)
 ```
 
