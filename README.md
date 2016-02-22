@@ -2,6 +2,7 @@
 
 Keys:
 
+```
   ESC   Quit
   G     Toggle fullscreen
 
@@ -42,5 +43,5 @@ Keys:
 
   -     Save cursor byte to temporary
   =     Set cursor byte from temporary
-
+```
 
