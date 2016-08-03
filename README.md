@@ -1,5 +1,7 @@
 #Apple 2 HGR BYTE Inspector
 
+[hgr byte inspector screenshot](hgrybte.png?raw=true)
+
 Keys:
 
 ```
