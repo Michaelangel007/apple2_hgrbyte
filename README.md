@@ -1,6 +1,6 @@
 #Apple 2 HGR BYTE Inspector
 
-[hgr byte inspector screenshot](hgrbyte.png?raw=true)
+![hgr byte inspector screenshot](hgrbyte.png?raw=true)
 
 Keys:
 
