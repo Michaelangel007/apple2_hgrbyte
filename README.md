@@ -123,6 +123,8 @@ Also included is `squirt` -- a File Manager.
 
 # Tutankhamun
 
+Source image from BrutalDeluxe's [LZ4 page](https://www.brutaldeluxe.fr/products/crossdevtools/lz4/index.html)
+
 Converted to dhgr via Sheldon's [tohgr](http://wsxyz.net/tohgr.html)
 
 ```
@@ -132,6 +134,8 @@ tohgr.mac -dhgr tut.png
 ![Tutankhamun original](pics/tut.png?raw=true)
 
 ![Tutankhamun converted](pics/tut_dhgr.png?raw=true)
+
+
 
 
 # Assembler
