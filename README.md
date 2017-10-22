@@ -1,10 +1,17 @@
 # Apple 2 DHGR/HGR BYTE Inspector
 
-![hgr byte inspector screenshot](hgrbyte.png?raw=true)
-![dhgr byte inspector screenshot](dhgrbyte.png?raw=true)
-![view screenshot](viewdhgr.png?raw=true)
+![hgr byte inspector screenshot](screenshots/hgrbyte.png?raw=true)
+![dhgr byte inspector screenshot](screenshots/dhgrbyte.png?raw=true)
+![view screenshot](screenshots/viewdhgr.png?raw=true)
 
-Keys:
+# Instructions
+
+1. Start AppleWin
+2. F3 to select Slot 6, Drive 1
+3. Open: `hgrbyte.dsk`
+
+
+# Keys:
 
 ```
   ESC   Quit
@@ -96,7 +103,7 @@ Keys:
 280 A = A-P: X=M(B3):GOSUB 2
 290 NEXT:RETURN
 900 REM DHGR 16-colors 
-900 REM $00,$04,$44,$4C,$22,$2A,$66,$6E
+900 REM $00,$04,$44,$4C,$22,$2A,$http://wsxyz.net/tohgr.html66,$6E
 901 REM $11,$19,$55,$5D,$33,$3B,$77,$7F
 902 DATA 0,68
 903 DATA 34,102
@@ -109,15 +116,22 @@ Memory order is:
 * $2000 -> AUX  $2000
 * $4000 -> MAIN $2000
 
-To view, you'll need a [DHGR Viewer](dhgr.view.s)
+To view without the editor you'll need a [DHGR Viewer](src/dhgr.view.s)
+
+Also included is `squirt` -- a File Manager.
+
 
 # Tutankhamun
 
-Convertedt to dhgr via Sheldon's [tohgr](http://wsxyz.net/tohgr.html)
+Converted to dhgr via Sheldon's [tohgr](http://wsxyz.net/tohgr.html)
 
 ```
 tohgr.mac -dhgr tut.png
 ```
+
+![tut original](screenshots/tut.png?raw=true)
+
+![tut converted](screenshots/tut_dhgr.png?raw=true)
 
 
 # Assembler
