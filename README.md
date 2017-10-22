@@ -129,9 +129,9 @@ Converted to dhgr via Sheldon's [tohgr](http://wsxyz.net/tohgr.html)
 tohgr.mac -dhgr tut.png
 ```
 
-![tut original](screenshots/tut.png?raw=true)
+![Tutankhamun original](pics/tut.png?raw=true)
 
-![tut converted](screenshots/tut_dhgr.png?raw=true)
+![Tutankhamun converted](pics/tut_dhgr.png?raw=true)
 
 
 # Assembler
