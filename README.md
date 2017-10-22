@@ -1,12 +1,20 @@
-#Apple 2 HGR BYTE Inspector
+# Apple 2 DHGR/HGR BYTE Inspector
 
 ![hgr byte inspector screenshot](hgrbyte.png?raw=true)
+![dhgr byte inspector screenshot](dhgrbyte.png?raw=true)
+![view screenshot](viewdhgr.png?raw=true)
 
 Keys:
 
 ```
   ESC   Quit
+  g     Toggle fullscreen
   G     Toggle fullscreen
+
+  i     Move cursor up
+  j     Move cursor left
+  k     Move cursor right
+  l     Move cursor down
 
   I     Move cursor up
   J     Move cursor left
@@ -46,4 +54,78 @@ Keys:
   -     Copy byte  (Save cursor byte to temporary)
   =     Paste byte (Set cursor byte from temporary)
 ```
+
+# DHGR Colors
+
+```Basic
+0 DIM M(16)
+1 FOR I=0 TO 7:READ M(I*2):M(I*2+1)=M(I*2)+8:NEXT:GOTO 9
+2 POKE A,X:RETURN
+3 B3=C *2:IF B3 > 15 THEN B3 = B3 - 15
+4 B2=B3*2:IF B2 > 15 THEN B2 = B2 - 15
+5 B1=B2*2:IF B1 > 15 THEN B1 = B1 - 15
+6 B0=B1*2:IF B0 > 15 THEN B0 = B0 - 15
+7 RETURN
+9 P=8192:PRINT CHR$(12);CHR$(21):REM 40-COL
+10 TEXT:HOME:HGR2:HGR
+20 FOR Y=0 TO 7
+30 Z=P + Y*1024
+40 A=Z+P+1:GOSUB 110
+50 A=Z+128:GOSUB 210
+60 A=Z+P+256:GOSUB 110
+70 A=Z+384+1:GOSUB 210
+80 NEXT
+90 POKE 3*P-2,0:POKE 3*P-1,32:REM SQUIRT PREVIEW:DHGR
+100 VTAB 22:PRINT "BSAVE PAL.DHGR,A$2000,L$4000":END
+110 FOR C=0 TO 15:REM Aux/Main/Aux/Main
+120 GOSUB 3:IF  C=0 THEN 190
+130 A = A-P: X=M(B0):GOSUB 2
+140 A = A+P: X=M(B1):GOSUB 2
+150 A=A+1
+160 A = A-P: X=M(B2):GOSUB 2
+170 A = A+P: X=M(B3):GOSUB 2
+180 A=A+1:PRINT
+190 NEXT:RETURN
+210 FOR C=0 TO 15:REM Main/Aux/Main/Aux
+220 GOSUB 3:IF C=0 THEN 290
+230 A = A+P: X=M(B0):GOSUB 2
+240 A=A+1
+250 A = A-P: X=M(B1):GOSUB 2
+260 A = A+P: X=M(B2):GOSUB 2
+270 A=A+1
+280 A = A-P: X=M(B3):GOSUB 2
+290 NEXT:RETURN
+900 REM DHGR 16-colors 
+900 REM $00,$04,$44,$4C,$22,$2A,$66,$6E
+901 REM $11,$19,$55,$5D,$33,$3B,$77,$7F
+902 DATA 0,68
+903 DATA 34,102
+904 DATA 17,85
+905 DATA 51,119
+```
+
+Memory order is:
+
+* $2000 -> AUX  $2000
+* $4000 -> MAIN $2000
+
+To view, you'll need a [DHGR Viewer](dhgr.view.s)
+
+# Tutankhamun
+
+Convertedt to dhgr via Sheldon's [tohgr](http://wsxyz.net/tohgr.html)
+
+```
+tohgr.mac -dhgr tut.png
+```
+
+
+# Assembler
+
+* [Merlin32](https://www.brutaldeluxe.fr/products/crossdevtools/merlin/)
+
+
+# License
+
+* [WTFPL](http://www.wtfpl.net/)
 
