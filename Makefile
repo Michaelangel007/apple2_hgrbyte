@@ -1,16 +1,19 @@
-TARGETS = hgr.byte view.dhgr dhgr.byte
+TARGETS = bin/hgr.byte bin/view.dhgr bin/dhgr.byte
 all: $(TARGETS)
 
 .PHONY: clean
 clean:
 	$(RM) $(TARGETS)
 
-hgr.byte: hgr.byte.s
+bin/hgr.byte: src/hgr.byte.s
 	merlin32 $<
+	mv src/hgr.byte bin/
 
-view.dhgr: view.dhgr.s
+bin/view.dhgr: src/view.dhgr.s
 	merlin32 $<
+	mv src/view.dhgr bin/
 
-dhgr.byte: dhgr.byte.s
+bin/dhgr.byte: src/dhgr.byte.s
 	merlin32 $<
+	mv src/dhgr.byte bin/
 
