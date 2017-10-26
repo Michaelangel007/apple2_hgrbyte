@@ -1,12 +1,12 @@
 ; Merlin32
 
 CONFIG_DHGR = 1
+CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 
 ; DHGR Byte Inspector
-; https://github.com/Michaelangel007/apple2_hgrbyte/
-;
 ; Michael Pohoreski
-; Version 22
+; https://github.com/Michaelangel007/apple2_hgrbyte/
+; Version 27
 ;
 ; TL:DR;
 ;   IJKL to move
@@ -62,6 +62,8 @@ CONFIG_DHGR = 1
 ;   =     Set cursor byte from temporary
 ;
 ; TODO:
+;   ?   Help screen
+; col/2
 ;   Z = clear aux mem
 ;   X = swap aux/main mem
 ;   M = mark begin/end -- show width,height,x,y
@@ -73,6 +75,7 @@ CONFIG_DHGR = 1
 CH          = $24   ; 40-col text cursor column
 CV          = $25   ; 40-col text cursor row
 CH80        = $57B  ; 80-col text cursor column
+BASL        = $28   ; 16-bit pointer to start of TEXT row
 
 GBASL       = $26   ; 16-bit pointer to start of D/HGR scanline
 GBASH       = $27
@@ -96,13 +99,17 @@ SETTXT      = $FB39
 ;CR          = $FC62
 ;CROUT       = $FD8E ; Output CR
 
-COUT        = $FDED ; Char Output aka putch()
+    DO CONFIG_BIOS
 PR_HEX      = $FDD3
 PRBYTE      = $FDDA
+COUT        = $FDED ; Char Output aka putch()
+    ELSE
+    FIN
 
+; When Store80 OFF aux mem determined by AUXRDON/AUXWRON
 ; When Store80 ON, Page 2=ON, read/writes touch aux mem
-SW_STORE80  = $C000 ; STA $+0 OFF, $+1 ON
-SW_STORE81  = $C001 ; $C055 = page 2
+SW_STORE80  = $C000 ; use $C002 .. $C005 for aux mem
+SW_STORE81  = $C001 ; use page 2 = $C055 for aux mem
 
 SW_SET40COL = $C00C ; 40-col mode
 SW_SET80COL = $C00D ; 80-col mode
@@ -123,6 +130,8 @@ SW_DHGR     = $C05E ; Mode DHGR
 SW_SHGR     = $C05F ; Mode SHGR
 
 cursor_row  = $E2   ; used by Applesoft HGR.row
+
+tempByte    = $F6   ; forward bits for pixel print
 aux_ptr     = $F7   ; copy of GBAS but points to HGR2 $40xx..$5Fxx
 lastkey     = $F9
 cursor_org  = $FA   ; When cursor is saved
@@ -133,7 +142,7 @@ FLAG_FULL   = $01   ; == $1 -> $C052 MIXCLR
 ;                   ; == $0 -> $C053 MIXSET
 flags       = $FD   ;
 
-temp        = $FE
+temp        = $FE   ; reverse bits for pixel print
 cursor_col  = $FF   ; x2 for DHGR
 HGRPAGE     = $E6   ; used by Applesoft HGR.page
                     ; $20=MAIN, $40=AUX
@@ -149,7 +158,7 @@ __MAIN = $900
         ORG __MAIN
 
 DhgrByte
-        LDA #22             ; Version - copy HGR1 to aux, HGR2 to HGR1
+        LDA #27             ; Version - copy HGR1 to aux, HGR2 to HGR1
         JSR Init_Exit       ; FEATURE: Set to 00 if you don't want to copy AUX $2000 to MAIN $4000
 
         BIT PAGE1           ; Page 1
@@ -160,7 +169,6 @@ DhgrByte
     DO CONFIG_DHGR
         STA SW_DHGR         ; $C05E DHGR, not HGR
         STA SW_SET80COL     ; $C00D 80-col on
-        STA SW_STORE80      ; Turn off for app
     FIN
 
         BRA _Center
@@ -206,8 +214,6 @@ _EdgeU  LDA #00
         STA cursor_row
         ADC #1
         BNE GetByte         ; always
-
-
 _Center
         LDA #WIDTH/2
         STA cursor_col
@@ -234,7 +240,9 @@ GetByte                     ; Cursor position changed
 PutByte
         STA cursor_val      ; current value
         STA cursor_tmp      ; flashing cursor
+
         JSR DrawStatus
+;       STA SW_STORE80
 FlashByte
         JSR FlashCursorByte
 GetKey
@@ -367,32 +375,12 @@ Digit
 
 ; ------------------------------------------------------------------------
 DrawStatus
+;       STA SW_STORE81      ; COUT uses
         LDA #20             ; Cursor.Y = Top of 4 line split TEXT/HGR window
         JSR VTAB_COL0       ; Cursor.X = 0
 
         LDA #'X'+$80        ; X=## Y=## $=####:##
         JSR COUT
-
-    DO CONFIG_DHGR
-        LDY #8              ; src = &char[1][8]
-        LDA cursor_col
-        CLC
-        ROR
-        BCS HaveMainMem
-HaveAuxMem
-        LDY #0              ; src = &char[0][8]
-HaveMainMem
-
-        LDX #0              ; dst = 0
-CopyMemType
-        LDA sMemType,Y
-        STA sTextFooter,X
-        INY                 ; src++
-        INX                 ; dst++
-        CPX #8
-        BNE CopyMemType
-    FIN
-
         LDA cursor_col
         JSR PR_HEX
         LDA #' '+$80
@@ -416,15 +404,65 @@ CopyMemType
         JSR PRBYTE
         LDA #':'+$80
         JSR COUT
+
         LDA cursor_val
         JSR PRBYTE
         LDA #' '+$80
         JSR COUT
+        LDA cursor_val
+        JSR ReverseByte
 
+        JSR PrintStatusLine2
+        JSR PrintStatusLine3
+        JMP PrintStatusLine4
+
+; --- Status Line 2 ---
+PrintStatusLine2
+        LDA #21             ; Cursor.Y = 21
+        JSR VTAB_COL0
+
+    DO CONFIG_DHGR
+        LDA #'/' + $80
+        JSR COUT
+        LDA cursor_col
+        LSR
+        JSR PR_HEX
+        LDA #' '+$80
+        JSR COUT
+
+        LDA cursor_col
+        LSR
+        BCS HaveMainMem
+HaveAuxMem
+        LDX #<sMemTypeBeg   ; src = &char[0][0]
+        BCC HaveMemType     ; always
+HaveMainMem
+        LDX #<sMemTypeEnd   ; src = &char[1][0]
+HaveMemType
+        LDY #>sMemTypeBeg
+        JSR PrintStringZ
+    FIN
+
+        LDA #12
+        JSR HTAB
+
+        LDX #<sTextFooter2
+        LDY #>sTextFooter2
+        JSR PrintStringZ
+
+        LDA cursor_org
+        JSR PrintInverseByte
+;       JSR PRBYTE
+        LDA #' '+$80
+        JSR COUT
+        LDA cursor_org
+; intentional fall into ReverseByte
+
+; ----------
 ReverseByte
         LDX #8
-        LDA cursor_val
         STA temp
+        STA tempByte
 ReverseBit
         ASL temp
         ROR
@@ -445,22 +483,24 @@ PrintBitsNormal
         LDA #'~'+$80
         JSR COUT
 
-        LDX #8
-        LDA cursor_val
 PrintBitsReverse
+        LDX #8
+        LDA tempByte
+PrintBitsReverse1
         TAY
         JSR Bit2Asc
         TYA
         LSR
         DEX
-        BNE PrintBitsReverse
+        BNE PrintBitsReverse1
 
         LDA #'$'+$80
         JSR COUT
         PLA                 ; restore reverse byte
         JSR PRBYTE
+        RTS
 
-        LDA cursor_org      ; X=0
+PrintInverseByte
         PHA
         LSR
         LSR
@@ -469,21 +509,24 @@ PrintBitsReverse
         JSR NibToInvTxt
         PLA
         JSR NibToInvTxt
+        RTS
 
-        LDA #21             ; Cursor.Y = 21
-        JSR VTAB_COL0
 
-        LDX #0
-PrintFooter1
-        LDA sTextFooter, X
-        BEQ _DoneStatus
-        JSR COUT            ; 4 line text window, 2nd row
-        INX
-        BNE PrintFooter1    ; (almost) always
-_DoneStatus
-
-; Draw pixel grouping
+; --- Status Line 3 ---
+PrintStatusLine3
         LDA #22
+        JSR VTAB_COL0
+        LDA #20
+        JSR HTAB
+
+        LDX #<sTextFooter3
+        LDY #>sTextFooter3
+        JMP PrintStringZ
+
+; --- Status Line 4 ---
+; Draw pixel grouping
+PrintStatusLine4
+        LDA #23
         JSR VTAB_COL0
         LDA #29
         JSR HTAB
@@ -504,6 +547,22 @@ PrintFooter2
         BNE PrintFooter2
         RTS
 
+; IN:
+;   X=Lo
+;   Y=Hi
+PrintStringZ
+        STX PrintString2+1
+        STY PrintString2+2
+        LDX #0
+PrintString2
+        LDA $DA1A, X
+        BEQ PrintString3
+        JSR COUT            ; 4 line text window, 2nd row
+        INX
+        BNE PrintString2    ; (almost) always
+PrintString3
+        RTS
+
 ; Display nibble as inverse text
 ; 0 -> '0' $30
 ; 9 -> '9' $39
@@ -516,8 +575,9 @@ NibToInvTxt
         BCC PrintSave
         SBC #$39            ; C=1, $3A ':' -> $01 'A', $3F '?' -> $06
 PrintSave
-        STA sTextFooter+17,X ; VTAB 21:HTAB 17 and 18, Update Saved Byte
-        INX
+        JSR COUT
+;        STA sTextFooter+17,X ; VTAB 21:HTAB 17 and 18, Update Saved Byte
+;        INX
         RTS
 
 Bit2Asc
@@ -545,7 +605,7 @@ GetCursorByte               ; Main Aux
         TAY                 ; y = byte column
         BCS _get_main
 _get_aux
-        STA SW_STORE80
+;       STA SW_STORE80
         LDA (aux_ptr),Y
         DB $2C              ; OPTIMIZAITON: BRA _get_val -> BIT $abs - BIT $26B1
 _get_main
@@ -579,7 +639,7 @@ SetCursorByte
         TXA                 ; pop byte
         BCS _set_main
 
-        STA SW_STORE80
+;       STA SW_STORE80
         STA (aux_ptr),Y     ; Shadow copy to HGR2
         STA SW_AUXWROFF+1   ; Write AUX
 _set_main
@@ -590,19 +650,85 @@ _set_main
         STA SW_AUXWROFF     ; Write MAIN
         RTS
 
-
+; ========================================================================
+    DO CONFIG_BIOS
+    ELSE
+ClearText80
+        STA SW_AUXWROFF+1
+        JSR ClearText40
+        STA SW_AUXWROFF
+ClearText40
+        LDA #' '+$80        ; NORMAL SPC
+        TAY
+ClearTextPage
+        STA $400,Y
+        STA $480,Y
+        STA $500,Y
+        STA $580,Y
+        STA $600,Y
+        STA $680,Y
+        STA $700,Y
+        STA $780,Y
+        INY
+        CPY #$78
+        BNE ClearTextPage
+        RTS
+PR_HEX
+        PHA
+        LDA #'=' + $80      ; normal
+        JSR COUT
+        PLA
+PRBYTE
+        PHA
+        LSR
+        LSR
+        LSR
+        LSR
+        JSR PR_NIB
+        PLA
+        AND #$0F
+PR_NIB
+        ORA #'0' + $80
+        CMP #':' + $80
+        BCC COUT
+        ADC #$06
+COUT
+        PHY
+    DO CONFIG_DHGR
+        PHX
+        TAX                 ; push char
+        LDA CH80
+        LSR
+        TAY                 ; Y = col/2
+        TXA                 ; pop char
+        BCS Main
+Aux
+        STA SW_AUXWROFF+1   ; Write AUX
+Main
+    ELSE
+        LDY CH
+    FIN
+        STA (BASL),Y
+    DO CONFIG_DHGR
+        STA SW_AUXWROFF     ; Write MAIN
+        INC CH80
+        PLX
+    ELSE
+        INC CH
+    FIN
+        PLY
+        RTS
+    FIN
 
 ; ========================================================================
 ; Common code -- called by Init, Exit
 Init_Exit
-        STA SW_SET80COL
-
     DO CONFIG_DHGR
+        STA SW_STORE80  ; Turn off for AUXMOVE
+        STA SW_ALTCHAR0 ; Turn off mouse-text
+
         STA SW_AUXRDOFF
         STA SW_AUXWROFF
-
-        STA SW_STORE80
-        STA SW_ALTCHAR0 ; Turn off mouse-text
 
         LDX #$20
         LDY #$40
@@ -648,6 +774,9 @@ OnInit
         CLC             ; C=0 Aux to Main
         JSR SetDst00    ; C=0 don't do MOVE
         JSR AUXMOVE
+
+        STA SW_SET80COL
+
         BRA DoneCopy
 
 ; "Unlinearize" interleaved AUX/MAIN memory
@@ -672,12 +801,17 @@ OnExit
 
         STA SW_SET40COL ; $C00C
         STA SW_DHGR+1   ; $C05F DHGR off
-        STA SW_STORE81  ; Enable Page 2 switching
+;       STA SW_STORE81  ; Enable Page 2 switching
 DoneCopy
     FIN
 
+    DO CONFIG_BIOS
         JSR SETTXT
         JSR HOME
+    ELSE
+        JSR ClearText80
+        STA TXTCLR+1
+    FIN
 
         LDX #$20
         STX HGRPAGE
@@ -718,11 +852,20 @@ DoneDst00
 
 
 ; ========================================================================
-sTextFooter
+sTextFooter2
     ;                1         2         3
     ;      0123456789012345678901234567890123456789
+    ;                      1               2
+    ;      0123456789ABCDEF0123456789ABCDEF01234567
     ;     "X=## Y=## $=####:## %%%%%%%%~%%%%%%%%$00"
-    ASC   "---/----    SAVE:?? 76543210 "
+    ;     "/=## A/M    SAVE:?? %%%%%%%%~%%%%%%%%$00
+    ;     "                    76543210 12345678
+    ;     "                             [11]222-
+    ASC               "SAVE:"
+    DB $00
+
+sTextFooter3
+    ASC "76543210 "
     INV                                "12345678" ;1-8 INVERSE
 ;    DB '1' & $3F
 ;    DB '2' & $3F
@@ -734,10 +877,16 @@ sTextFooter
 ;    DB '8' & $3F
     DB $00
 
-; char [2][8]
-sMemType
-    ASC "AUX/----"
-    ASC "---/MAIN"
+; char [2][3]
+sMemTypeBeg
+    INV "A"
+    ASC  "/M"
+    DB $00
+sMemTypeEnd
+
+    ASC "A/"
+    INV   "M"
+    DB $00
 
 ; These alternative text groupings
 ; don't look as good in DHGR 80-col text mode
@@ -751,10 +900,10 @@ sMemType
 ;        12345678123456781234567812345678
 ; Show which pixel group the bits belong to
 sPixelFooter
-    ASC "[11]222 "
-    ASC         "2[33]44 "
-    ASC                 "44[55]6 "
-    ASC                         "666[77] "
+    ASC "[11]222-"
+    ASC         "2[33]44-"
+    ASC                 "44[55]6-"
+    ASC                         "666[77]-"
 
 
 ; ------------------------------------------------------------------------
