@@ -15,7 +15,7 @@
 
 Ver 27.
 - Ripped out ROM output routines and replaced with native code for speed
-- Updated the status bar so that the saved bits and revers are displayed
+- Updated the status bar so that the saved bits and reverse bits are displayed
 - Added x/2 byte column output
 - Shortened memory bank indicator "AUX/MAIN" to "A/M"
 
