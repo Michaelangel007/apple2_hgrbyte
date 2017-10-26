@@ -6,7 +6,7 @@ CONFIG_DHGR = 1
 ; https://github.com/Michaelangel007/apple2_hgrbyte/
 ;
 ; Michael Pohoreski
-; Version 21
+; Version 22
 ;
 ; TL:DR;
 ;   IJKL to move
@@ -29,7 +29,7 @@ CONFIG_DHGR = 1
 ;   L     Move cursor down
 ;
 ;   ^I    Move cursor to col 0
-;   ^J    Move cursor to col 39
+;   ^J    Move cursor to col 79
 ;   ^K    Move cursor to row 0
 ;   ^L    Move cursor to row 191
 ;   RET   Center cursor
@@ -149,7 +149,7 @@ __MAIN = $900
         ORG __MAIN
 
 DhgrByte
-        LDA #21             ; Version - copy HGR1 to aux, HGR2 to HGR1
+        LDA #22             ; Version - copy HGR1 to aux, HGR2 to HGR1
         JSR Init_Exit       ; FEATURE: Set to 00 if you don't want to copy AUX $2000 to MAIN $4000
 
         BIT PAGE1           ; Page 1
@@ -374,13 +374,13 @@ DrawStatus
         JSR COUT
 
     DO CONFIG_DHGR
-        LDY #0              ; src = &char[0][8]
+        LDY #8              ; src = &char[1][8]
         LDA cursor_col
         CLC
         ROR
         BCS HaveMainMem
 HaveAuxMem
-        LDY #8              ; src = &char[1][8]
+        LDY #0              ; src = &char[0][8]
 HaveMainMem
 
         LDX #0              ; dst = 0
