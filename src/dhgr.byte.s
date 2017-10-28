@@ -6,7 +6,7 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ; DHGR Byte Inspector
 ; Michael Pohoreski
 ; https://github.com/Michaelangel007/apple2_hgrbyte/
-; Version 27
+; Version 28
 ;
 ; TL:DR;
 ;   IJKL to move
@@ -16,7 +16,7 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ; Keys:
 ;
 ;   ESC   Quit
-;   G     Toggle fullscreen
+;   RET   Toggle fullscreen
 ;
 ;   i     Move cursor up
 ;   j     Move cursor left
@@ -28,11 +28,13 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ;   K     Move cursor right
 ;   L     Move cursor down
 ;
+;   G     Goto specified X,Y location
+;
 ;   ^I    Move cursor to col 0
 ;   ^J    Move cursor to col 79
 ;   ^K    Move cursor to row 0
 ;   ^L    Move cursor to row 191
-;   RET   Center cursor
+;   ^G    Center cursor
 ;
 ;   0..9  "Append" hex nibble to cursor byte
 ;   A..F
@@ -45,7 +47,10 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ;   ^     Toggle bit 5
 ;   &     Toggle bit 6
 ;   *     Toggle bit 7 (high bit)
-;   SPC   Toggle high bit of byte (bit 7)
+;
+;   SPC   Toggle bebin/end sprite region
+;   M     Reset region to none
+;
 ;   (     Set   byte to $FF (Shift-9)
 ;   )     Clear byte to $00 (Shift-0)
 ;   `     Flip all bits
@@ -58,15 +63,15 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ;   [     Rotate byte left
 ;   ]     Rotate byte right
 ;
-;   -     Save cursor byte to temporary
-;   =     Set cursor byte from temporary
+;   -     Save byte at cursor to temporary
+;   =     Load byte at cursor from temporary
 ;
 ; TODO:
-;   ?   Help screen
-; col/2
-;   Z = clear aux mem
-;   X = swap aux/main mem
-;   M = mark begin/end -- show width,height,x,y
+;   ;     Save sprite region to   $6000
+;   '     Load sprite region from $6000
+;   ?     Help screen
+;   Z     clear aux mem
+;   X     swap aux/main mem
 ;
 ; These aren't needed
 ;   S = save
@@ -80,11 +85,14 @@ BASL        = $28   ; 16-bit pointer to start of TEXT row
 GBASL       = $26   ; 16-bit pointer to start of D/HGR scanline
 GBASH       = $27
 
+; --- Screen Dimensions ---
     DO CONFIG_DHGR
-WIDTH       = 80    ;
+SCREEN_W    = 80    ;
     ELSE
-WIDTH       = 40    ; HGR
+SCREEN_W    = 40    ; HGR
     FIN
+SCREEN_H    = 192
+
 
 HPOSN       = $F411 ; A=row, Y,X=col update GBASL GBASH
 TABV        = $FB5B ; A=row,   ALL STA $25, JMP $FC22
@@ -120,14 +128,19 @@ SW_AUXWROFF = $C004 ; $+0 = Write Main $0200..$BFFF, $+1 = Write Aux $0200..$BFF
 SW_ALTCHAR0 = $C00E ; Mouse text off
 
 KEYBOARD    = $C000 ; LDA
-KEYSTROBE   = $C010
-TXTCLR      = $C050 ; Mode Graphics
+KEYSTROBE   = $C010 ; STA
+
+SW_TXTCLR   = $C050 ; Mode Graphics GR/HGR/DHGR
+SW_TXTSET   = $C051 ; Mode Text
 MIXCLR      = $C052 ; Full  screen
 MIXSET      = $C053 ; Split screen
 PAGE1       = $C054
 HIRES       = $C057 ; Mode HGR
 SW_DHGR     = $C05E ; Mode DHGR
 SW_SHGR     = $C05F ; Mode SHGR
+
+SQUEEKER    = $C030 ; Who we kidding, this ain't no SID chip son.
+F8_Wait     = $FCA8
 
 cursor_row  = $E2   ; used by Applesoft HGR.row
 
@@ -138,8 +151,22 @@ cursor_org  = $FA   ; When cursor is saved
 cursor_tmp  = $FB   ; Flashing cursor byte
 cursor_val  = $FC   ; Current byte under cursor
 
+; Input fields
+; **NOTE:** This must match status!
+INPUT_X = 2
+INPUT_Y = 7
+
+; Struct/Sprite Fields
+SPRITE_X = 0
+SPRITE_Y = 1
+SPRITE_W = 2
+SPRITE_H = 3
+
 FLAG_FULL   = $01   ; == $1 -> $C052 MIXCLR
 ;                   ; == $0 -> $C053 MIXSET
+FLAG_REGION_1 = 2   ; have a valid region 1 x,y
+FLAG_REGION_2 = 4   ; have a valid region 2 x,y
+FLAG_REG_EVEN = 8   ; SPACE updates which region next
 flags       = $FD   ;
 
 temp        = $FE   ; reverse bits for pixel print
@@ -153,48 +180,42 @@ MOV_DST     = $0042 ; A4L
 AUXMOVE     = $C311 ; C=0 Aux->Main, C=1 Main->Aux
 MOVE        = $FE2C ; Main<->Main, *MUST* set Y=0 prior!
 
+; ========================================================================
+
 __MAIN = $900
 
         ORG __MAIN
 
 DhgrByte
-        LDA #27             ; Version - copy HGR1 to aux, HGR2 to HGR1
+        LDA #28             ; Version - copy HGR1 to aux, HGR2 to HGR1
         JSR Init_Exit       ; FEATURE: Set to 00 if you don't want to copy AUX $2000 to MAIN $4000
-
-        BIT PAGE1           ; Page 1
-        BIT TXTCLR          ; not text, but graphics
-        BIT MIXSET          ; Split screen text/graphics
-        BIT HIRES           ; HGR, no GR
-
-    DO CONFIG_DHGR
-        STA SW_DHGR         ; $C05E DHGR, not HGR
-        STA SW_SET80COL     ; $C00D 80-col on
-    FIN
-
         BRA _Center
 
 ; Funcs that JMP to GetByte before GotKey()
 ; Funcs that JMP to PutByte after  GotKey()
 _Screen                     ; Toggle mixed/full screen
         LDA flags           ; A = %????_????
-        AND #FLAG_FULL      ; A = %0000_000f
+        AND #FLAG_FULL      ; A = %0000_0001
         TAX                 ; f=0    f=1
         STA MIXCLR,X        ; C052   C053
         LDA flags           ; FULL   MIX
         EOR #FLAG_FULL      ; mode is based on old leading edge
         STA flags           ; not new trailing edge
         BRA FlashByte
-_HighBit
-        EOR #$80
-        BRA PutByte
-
+; --------------------
+_GotoXY         JMP OnGoto
+_ResetRegion    JMP OnResetRegion
+_MarkRegion     JMP OnMarkRegion
+_SaveSprite     JMP OnSaveSprite
+_LoadSprite     JMP OnLoadSprite
+; --------------------
 _MoveL  DEC cursor_col
         BPL GetByte
 _MoveR  INC cursor_col
         LDA cursor_col
-        CMP #WIDTH
+        CMP #SCREEN_W
         BCC GetByte         ; intentional fall into _EdgeR
-_EdgeR  LDA #WIDTH-1
+_EdgeR  LDA #SCREEN_W-1
         DB  $2C             ; BIT $ABS skip next instruction
 _EdgeL  LDA #0
         STA cursor_col
@@ -208,16 +229,16 @@ _MoveD  INC cursor_row
         LDA cursor_row
         CMP #192
         BCC GetByte         ; intentional fall into
-_EdgeD  LDA #$BF
+_EdgeD  LDA #192-1
         DB  $2C             ; BIT $ABS skip next instruction
 _EdgeU  LDA #00
         STA cursor_row
         ADC #1
         BNE GetByte         ; always
 _Center
-        LDA #WIDTH/2
+        LDA #SCREEN_W/2
         STA cursor_col
-        LDA #192/2
+        LDA #SCREEN_H/2
         STA cursor_row      ; intentional fall into GetByte
 
 GetByte                     ; Cursor position changed
@@ -240,7 +261,7 @@ GetByte                     ; Cursor position changed
 PutByte
         STA cursor_val      ; current value
         STA cursor_tmp      ; flashing cursor
-
+Status
         JSR DrawStatus
 ;       STA SW_STORE80
 FlashByte
@@ -357,21 +378,303 @@ _LoadByte
         CLC
         BCC GotoPutByte     ; always
 Nibble
-        LDY #3
-CursorSHL
-        ASL cursor_val
-        DEY
-        BPL CursorSHL
+        LDA cursor_val
+        JSR NibbleInput
+        LDA temp
+        STA cursor_val
+        CLC
+        BCC GotoPutByte     ; always
+
+; Shift temp left by 4 bits and append hex input
+; ----------
+NibbleInput
+        ASL
+        ASL
+        ASL
+        ASL
+        STA temp
 
         LDA lastkey
-        CMP #$41
+        CMP #'A'            ; < A ?
         BCC Digit
         SBC #7              ; $41 - 6 - (C=1) = $3A
 Digit
         AND #$0F            ; Key to Hex
         CLC
-        ADC cursor_val
-        BCC GotoPutByte     ; always
+        ADC temp
+OldCursor               ; --- FROM BELOW ---
+        RTS
+
+; ------------------------------------------------------------------------
+
+FLASH_TIME = $18        ; $1000 rate to flash cursor
+
+UpdateInputCursor
+        DEC gGotoTimer1
+        BNE OldCursor
+        DEC gGotoTimer2
+        BNE OldCursor
+        LDY #FLASH_TIME
+        STY gGotoTimer2
+NewCursor
+        INC gState
+        LDA gState
+        AND #1
+        STA gState
+        BNE DisplayInput
+DisplayCursor
+        LDX gGotoField
+        INX
+        STX CH80        ; Inlined HTAB
+        LDA gCursor
+        JMP COUT
+DisplayInput
+        LDA gGotoField  ; neededs since called from GotoFieldY
+        STA CH80        ; Inline HTAB
+        LDA temp
+        JMP PRBYTE
+; *** NOTE: OldCursor --- moved ABOVE ---
+
+
+; ----------
+OnGoto
+        LDA #20
+        JSR VTAB_COL0
+
+        LDX cursor_col
+        LDY cursor_row
+
+        STX temp
+
+        LDA #INPUT_X        ; default to X column
+        STA gGotoField
+
+        LDA #1
+        STA gState
+
+        STY gGotoNextY
+UpdateX
+        STX gGotoNextX
+ResetTimer
+        LDY #1              ; Force timer
+        STY gGotoTimer1     ; to time out
+        STY gGotoTimer2     ; and show digits
+
+GotoWaitKey
+        JSR UpdateInputCursor
+
+        LDA KEYBOARD
+        BPL GotoWaitKey
+        STA KEYSTROBE
+        AND #$7F
+        STA lastkey
+
+; SPC = Move to next field, or accept if at Y
+; CR  = Accept X or Accept X & Y
+; ESC = Cancel X or Y
+        CMP gKeyGotoNextField   ; SPC
+        BEQ GotoInputNextField
+        CMP gKeyGotoAccept      ; RET
+        BEQ GotoInputAccept
+        CMP gKeyGotoCancel      ; ESC
+        BEQ GotoInputCancel
+
+        CMP #'0'
+        BCC GotoBadInput    ; Bad
+        CMP #'9'+1
+        BCC GotoInputNib    ; Good
+        CMP #'A'
+        BCC GotoBadInput    ; Bad
+        CMP #'F'+1
+        BCC GotoInputNib    ; Good
+
+; ----------
+GotoBadInput
+        JSR SoftBeep
+        CLC
+        BCC GotoWaitKey
+
+GotoInputNib
+        LDA temp
+        JSR NibbleInput
+        STA temp
+
+        TAX                 ; X=temp
+        LDA gGotoField
+        CMP #INPUT_X
+        BEQ UpdateX         ; jump to init ABOVE
+
+        STX gGotoNextY
+        CLC
+        BCC ResetTimer
+
+; Flash Last nibble entered?
+;       LDA gGotoField
+;       TAX
+;       INX
+;       TXA
+;       JSR HTAB
+;       LDA lastkey
+;       JSR NibToInvTxt
+;       JSR COUT
+
+; --- SPC ---
+GotoInputNextField
+        LDA gGotoField
+        CMP #INPUT_X
+        BEQ GotoFieldY
+        CMP #INPUT_Y
+        BEQ GotoInputAccept ; Press SPC twice to accept
+;       --- ***OPTIMIZATION*** Intentional fall into
+
+GotoFieldY
+        LDA gGotoNextX
+        CMP #SCREEN_W
+        BCS GotoBadInput
+
+        JSR DisplayInput    ; In case cursor was displayed
+        LDA #INPUT_Y
+        STA gGotoField
+        LDY gGotoNextY
+        STY temp
+        JMP ResetTimer
+
+; --- RET --- accept X or X,Y input
+GotoInputAccept
+        LDX gGotoNextX      ; Need to double check input again
+        CPX #SCREEN_W       ; since user can enter: 80 RET
+        BCS GotoBadInput
+
+        LDY gGotoNextY
+        CPY #SCREEN_H
+        BCS GotoBadInput
+
+        JSR DisplayInput    ; In case cursor was displayed
+
+;       LDX gGotoNextY      ; OPTIMIZATION: COUT preserves
+;       LDY gGotoNextY      ; OPTIMIZATION: COUT preserves
+
+        STX cursor_col
+        STY cursor_row
+        JMP GetByte
+
+; --- ESC ---
+GotoInputCancel
+        BRA RegionTrampoline1
+
+; ------------------------------------------------------------------------
+OnResetRegion
+        JSR ZeroRegion
+        STA tSprite1 + SPRITE_X
+        STA tSprite1 + SPRITE_Y
+        STA tSprite2 + SPRITE_X
+        STA tSprite2 + SPRITE_Y
+
+        LDA flags
+        AND #$FF - {FLAG_REGION_1 + FLAG_REGION_2 + FLAG_REG_EVEN}
+        STA flags
+RegionTrampoline1
+        BRA DoneSprite
+
+ZeroRegion
+        LDA #0
+SetSprite1WH
+        STA tSprite1 + SPRITE_W
+        STA tSprite1 + SPRITE_H
+        RTS
+
+;SetSprite1XY
+;SetSprite2XY
+;        RTS
+
+; ---------
+OnMarkRegion
+        LDA flags
+        TAX             ; push flags
+        ROR             ; FLAG_FULL
+        ROR             ; FLAG_REGION_1
+        BCC NoRegion1
+        ROR             ; FLAG_REGION_2
+        BCC NoRegion2
+; Tri-State
+        ROR             ; FLAG_REGION_3
+
+        TXA             ; pop flags
+        EOR #FLAG_REG_EVEN
+        STA flags
+
+        BCS NoRegion2
+
+NoRegion1
+        TXA             ; pop flags
+        ORA #FLAG_REGION_1
+        STA flags
+        LDX cursor_col
+        LDY cursor_row
+        STX tSprite1 + SPRITE_X
+        STY tSprite1 + SPRITE_Y
+DoneSprite
+        JMP Status
+
+NoRegion2
+        TXA             ; pop flags
+        ORA #FLAG_REGION_2
+        STA flags
+        LDX cursor_col
+        LDY cursor_row
+        STX tSprite2 + SPRITE_X
+        STY tSprite2 + SPRITE_Y
+
+CalcWidth
+        TXA
+        SEC
+        SBC tSprite1 + SPRITE_X
+        BCS SaveWidth
+        EOR #$FF
+SaveWidth
+        TAX
+        INX
+        STX tSprite1 + SPRITE_W
+
+CalcHeight
+        TYA
+        SEC
+        SBC tSprite1 + SPRITE_Y
+        BCS SaveHeight
+        EOR #$FF
+SaveHeight
+        TAY
+        INY
+        STY tSprite1 + SPRITE_H
+        BRA DoneSprite
+
+OnSaveSprite
+        LDA tSprite1 + SPRITE_W
+        ORA tSprite1 + SPRITE_H
+        BNE ValidDimensions
+        JSR SoftBeep
+        BRA DoneSprite
+ValidDimensions
+
+OnLoadSprite
+        BRA DoneSprite
+
+; --- Ripped from Fantavision ---
+SoftBeep
+       LDY #$20
+SoftCycle
+       LDA #$02        ;+
+       JSR F8_Wait
+       STA SQUEEKER
+
+       LDA #$24
+       JSR F8_Wait
+       STA SQUEEKER
+
+       DEY
+       BNE SoftCycle    ;^
+       RTS
+
 
 ; ------------------------------------------------------------------------
 DrawStatus
@@ -383,14 +686,12 @@ DrawStatus
         JSR COUT
         LDA cursor_col
         JSR PR_HEX
-        LDA #' '+$80
-        JSR COUT
+        JSR PrintSpace
         LDA #'Y'+$80
         JSR COUT
         LDA cursor_row
         JSR PR_HEX
-        LDA #' '+$80
-        JSR COUT
+        JSR PrintSpace
         LDA #'$'+$80
         JSR COUT
         LDA GBASH
@@ -407,14 +708,57 @@ DrawStatus
 
         LDA cursor_val
         JSR PRBYTE
-        LDA #' '+$80
-        JSR COUT
+        JSR PrintSpace
         LDA cursor_val
         JSR ReverseByte
 
+        JSR PrintSpace
+        JSR COUT
+
+        LDA flags
+        AND #FLAG_REGION_1
+        BEQ PrintNoRegion1
+
+        LDA tSprite1 + SPRITE_X
+        LDX #'X'+$80
+        LDY #'1'+$80
+        JSR PrintSpriteMeta
+        LDA tSprite1 + SPRITE_Y
+        LDX #'Y'+$80
+        LDY #'1'+$80
+        JSR PrintSpriteMeta
+
+        BRA DoneStatusLine1
+
+PrintNoRegion1
+        LDX #<sTextSprite1
+        LDY #>sTextSprite1
+        JSR PrintStringZ
+
+DoneStatusLine1
+
         JSR PrintStatusLine2
-        JSR PrintStatusLine3
-        JMP PrintStatusLine4
+        JMP PrintStatusLine3
+
+; IN:
+;   A = Val
+;   X = 'X' or 'Y'
+;   Y = '1' or '2'
+; --------------------
+PrintSpriteMeta
+        STA temp
+        TXA
+        JSR COUT
+        TYA
+        JSR COUT
+        LDA #':'+$80
+        JSR COUT
+        LDA temp
+;       JSR PR_HEX
+        JSR PRBYTE
+PrintSpace
+        LDA #' '+$80
+        JMP COUT
 
 ; --- Status Line 2 ---
 PrintStatusLine2
@@ -427,8 +771,7 @@ PrintStatusLine2
         LDA cursor_col
         LSR
         JSR PR_HEX
-        LDA #' '+$80
-        JSR COUT
+        JSR PrintSpace
 
         LDA cursor_col
         LSR
@@ -452,11 +795,97 @@ HaveMemType
 
         LDA cursor_org
         JSR PrintInverseByte
-;       JSR PRBYTE
-        LDA #' '+$80
-        JSR COUT
+        JSR PrintSpace
         LDA cursor_org
-; intentional fall into ReverseByte
+        JSR ReverseByte
+
+        JSR PrintSpace
+        JSR COUT
+
+        LDA flags
+        AND #FLAG_REGION_2
+        BEQ PrintNoRegion2
+
+        LDA tSprite2 + SPRITE_X
+        LDX #'X'+$80
+        LDY #'2'+$80
+        JSR PrintSpriteMeta
+        LDA tSprite2 + SPRITE_Y
+        LDX #'Y'+$80
+        LDY #'2'+$80
+        JMP PrintSpriteMeta
+
+PrintNoRegion2
+        LDX #<sTextSprite2
+        LDY #>sTextSprite2
+        JMP PrintStringZ
+DoneStatusLine3
+
+
+; --- Status Line 3 ---
+PrintStatusLine3
+        LDA #22
+        JSR VTAB_COL0
+        LDA #20
+        JSR HTAB
+
+        LDX #<sTextFooter3
+        LDY #>sTextFooter3
+        JSR PrintStringZ
+
+        LDA tSprite1 + SPRITE_W
+        LDX #' '+$80
+        LDY #'W'+$80
+        JSR PrintSpriteMeta
+        LDA tSprite1 + SPRITE_H
+        LDX #' '+$80
+        LDY #'H'+$80
+        JSR PrintSpriteMeta
+
+; intentionall fall into 4
+
+; --- Status Line 4 ---
+; Draw pixel grouping
+PrintStatusLine4
+        LDA #23
+        JSR VTAB_COL0
+        LDA #29
+        JSR HTAB
+
+; (x & 4) * 8
+        LDA cursor_col      ; src = sPixelFooter
+        AND #3
+        ASL
+        ASL
+        ASL
+        TAX                 ; src += 8*col
+        LDY #8              ; char [4][8]
+PrintFooter2
+        LDA sPixelFooter,X
+        JSR COUT
+        INX
+        DEY                 ; len--
+        BNE PrintFooter2
+
+; --- TODO --- sprite A$6000,L$####
+        RTS
+
+
+; IN:
+;   X=Lo
+;   Y=Hi
+PrintStringZ
+        STX PrintString2+1
+        STY PrintString2+2
+        LDX #0
+PrintString2
+        LDA $DA1A, X
+        BEQ PrintString3
+        JSR COUT            ; 4 line text window, 2nd row
+        INX
+        BNE PrintString2    ; (almost) always
+PrintString3
+        RTS
 
 ; ----------
 ReverseByte
@@ -497,8 +926,7 @@ PrintBitsReverse1
         LDA #'$'+$80
         JSR COUT
         PLA                 ; restore reverse byte
-        JSR PRBYTE
-        RTS
+        JMP PRBYTE
 
 PrintInverseByte
         PHA
@@ -508,66 +936,14 @@ PrintInverseByte
         LSR
         JSR NibToInvTxt
         PLA
-        JSR NibToInvTxt
-        RTS
-
-
-; --- Status Line 3 ---
-PrintStatusLine3
-        LDA #22
-        JSR VTAB_COL0
-        LDA #20
-        JSR HTAB
-
-        LDX #<sTextFooter3
-        LDY #>sTextFooter3
-        JMP PrintStringZ
-
-; --- Status Line 4 ---
-; Draw pixel grouping
-PrintStatusLine4
-        LDA #23
-        JSR VTAB_COL0
-        LDA #29
-        JSR HTAB
-
-; (x & 4) * 8
-        LDA cursor_col      ; src = sPixelFooter
-        AND #3
-        ASL
-        ASL
-        ASL
-        TAX                 ; src += 8*col
-        LDY #8              ; char [4][8]
-PrintFooter2
-        LDA sPixelFooter,X
-        JSR COUT
-        INX
-        DEY                 ; len--
-        BNE PrintFooter2
-        RTS
-
-; IN:
-;   X=Lo
-;   Y=Hi
-PrintStringZ
-        STX PrintString2+1
-        STY PrintString2+2
-        LDX #0
-PrintString2
-        LDA $DA1A, X
-        BEQ PrintString3
-        JSR COUT            ; 4 line text window, 2nd row
-        INX
-        BNE PrintString2    ; (almost) always
-PrintString3
-        RTS
+;       *** OPTIMIZATION: intentional fall into ***
 
 ; Display nibble as inverse text
 ; 0 -> '0' $30
 ; 9 -> '9' $39
 ; A -> ^A  $01
 ; F -> ^F  $06
+; @see NibToAscTxt
 NibToInvTxt
         AND #$F
         ORA #'0'+$00        ; ASCII: +$80
@@ -678,7 +1054,7 @@ PR_HEX
         LDA #'=' + $80      ; normal
         JSR COUT
         PLA
-PRBYTE
+PRBYTE                      ; PrintByteHex
         PHA
         LSR
         LSR
@@ -686,13 +1062,11 @@ PRBYTE
         LSR
         JSR PR_NIB
         PLA
-        AND #$0F
 PR_NIB
-        ORA #'0' + $80
-        CMP #':' + $80
-        BCC COUT
-        ADC #$06
+        JSR NibToAscTxt
+; A,X,Y preserved
 COUT
+
         PHY
     DO CONFIG_DHGR
         PHX
@@ -719,6 +1093,17 @@ Main
         PLY
         RTS
     FIN
+
+; @see NibToInvTxt
+; --------------------
+NibToAscTxt
+        AND #$0F
+        ORA #'0' + $80
+        CMP #':' + $80
+        BCC _NibToAscTxtDone
+        ADC #$06
+_NibToAscTxtDone
+        RTS
 
 ; ========================================================================
 ; Common code -- called by Init, Exit
@@ -777,6 +1162,16 @@ OnInit
 
         STA SW_SET80COL
 
+        BIT PAGE1           ; Page 1
+        BIT SW_TXTCLR       ; not text, but graphics
+        BIT MIXSET          ; Split screen text/graphics
+        BIT HIRES           ; HGR, no GR
+
+    DO CONFIG_DHGR
+        STA SW_DHGR         ; $C05E DHGR, not HGR
+        STA SW_SET80COL     ; $C00D 80-col on
+    FIN
+
         BRA DoneCopy
 
 ; "Unlinearize" interleaved AUX/MAIN memory
@@ -802,6 +1197,7 @@ OnExit
         STA SW_SET40COL ; $C00C
         STA SW_DHGR+1   ; $C05F DHGR off
 ;       STA SW_STORE81  ; Enable Page 2 switching
+        STA SW_TXTCLR+1
 DoneCopy
     FIN
 
@@ -810,7 +1206,6 @@ DoneCopy
         JSR HOME
     ELSE
         JSR ClearText80
-        STA TXTCLR+1
     FIN
 
         LDX #$20
@@ -851,30 +1246,49 @@ DoneDst00
         RTS
 
 
+; === Goto Cursor ===
+;  char cursors[2]
+gState  DB 0    ; 0=show cursor, 1=show hex input val
+gCursor ASC "_" ; \ Alernate showing cursor
+;gOutput ASC '?' ; / and input digit
+
+gGotoNextX  DB 0    ; prev cursor_col
+gGotoNextY  DB 0    ; prev cursor_row
+gGotoField  DB 0    ; column, INPUT_X, INPUT_Y
+gGotoTimer1 DB 0    ; Flash Rate: "0" then "_"
+gGotoTimer2 DB 0    ;
+
+gKeyGotoNextField   ASC ' '         ; SPC
+gKeyGotoCancel      DB  '[' & $1F   ; ESC
+gKeyGotoAccept      DB  'M' & $1F   ; RET
+
+; ***NOTE:*** INPUT_X INPUT_Y must match status
+; 0123456789A
+; X=00 Y=00=
+;   ^^^  ^^^
+;   2,3  7,8
+
 ; ========================================================================
-sTextFooter2
+; === Status ===
     ;                1         2         3
     ;      0123456789012345678901234567890123456789
     ;                      1               2
     ;      0123456789ABCDEF0123456789ABCDEF01234567
-    ;     "X=## Y=## $=####:## %%%%%%%%~%%%%%%%%$00"
-    ;     "/=## A/M    SAVE:?? %%%%%%%%~%%%%%%%%$00
-    ;     "                    76543210 12345678
+    ;     "X=## Y=## $=####:## %%%%%%%%~%%%%%%%%$00  X1:## Y1:##
+    ;     "/=## A/M    SAVE:?? %%%%%%%%~%%%%%%%%$00  X2:## Y2:##
+    ;     "                    76543210 12345678     W :## H :##
     ;     "                             [11]222-
-    ASC               "SAVE:"
-    DB $00
+sTextSprite1 ASC "X1:?? Y1:??",00
+sTextSprite2 ASC "X2:?? Y2:??",00
+sTextSprite3 ASC " W:??  H:??",00
+
+sTextFooter2
+    ASC               "SAVE:",00
 
 sTextFooter3
-    ASC "76543210 "
-    INV                                "12345678" ;1-8 INVERSE
-;    DB '1' & $3F
-;    DB '2' & $3F
-;    DB '3' & $3F
-;    DB '4' & $3F
-;    DB '5' & $3F
-;    DB '6' & $3F
-;    DB '7' & $3F
-;    DB '8' & $3F
+    ASC                      "76543210 "
+    INV                                "12345678"      ; 1-8 INVERSE
+    ASC                                        "     " ; padding for sprite W,H
     DB $00
 
 ; char [2][3]
@@ -906,13 +1320,24 @@ sPixelFooter
     ASC                         "666[77]-"
 
 
+; === Sprite/Region ===
+; X,Y
+; W,H
+tSprite1
+    DB 0, 0
+    DB 0, 0
+tSprite2
+    DB 0, 0
+    DB 0, 0
+
+
+
 ; ------------------------------------------------------------------------
 ; Keys are searched in reverse order
 ; Sorted by least used to most used
 aKeys
         DB    '[' & $1F     ; _Exit     ESC  Quit
-        ASC   'g'           ; _Screen   G    Toggle fullscreen
-        ASC   'G'           ; _Screen   G    Toggle fullscreen
+        DB    'M' & $1F     ; _Screen   RET  Toggle fullscreen
 
         DB    'H' & $1F     ; _MoveL    <-   Ctrl-H $08
         DB    'U' & $1F     ; _MoveR    ->   Ctrl-U $15
@@ -920,8 +1345,9 @@ aKeys
         DB    'I' & $1F     ; _EdgeU    ^I   Ctrl-I $09 Move cursor to row 0
         DB    'J' & $1F     ; _EdgeL    ^J   Ctrl-J $0A Move cursor to col 0
         DB    'K' & $1F     ; _EdgeD    ^K   Ctrl-K $0B Move cursor to row 191
-        DB    "L" & $1F     ; _EdgeR    ^L   Ctrl-L $0C Move cursor to col 39
-        DB    "M" & $1F     ; _Center   Center cursor
+        DB    'L' & $1F     ; _EdgeR    ^L   Ctrl-L $0C Move cursor to col 39
+        DB    'G' & $1F     ; _Center   Center cursor
+        ASC   'G'           ; _GotoXY   Move cursor to specified X Y
 
         ASC   'i'           ; _moveU    Move cursor Up
         ASC   'j'           ; _moveL    Move cursor Left
@@ -942,11 +1368,12 @@ aKeys
         ASC   '&'           ; _Bit6     Toggle bit 6
         ASC   '*'           ; _Bit7     Toggle bit 7
 
-    DO CONFIG_DHGR
-        ASC   ' '           ; _HighBit  Toggle high bit of byte (bit 7) is useless in DHGR mode
-    ELSE
-        ASC   ' '           ; _HighBit  Toggle high bit of byte (bit 7)
-    FIN
+        ASC   ';'           ; _SaveSprite
+        DB    "'" & $3F     ; _LoadSprite
+
+        ASC   'M'           ; _ResetRegion
+        ASC   ' '           ; _MarkRegion   Changed from Toggle high bit of byte (bit 7) is useless in DHGR mode
+
         ASC   '('           ; _ByteFF   Set byte to FF (Shift-9)
         ASC   ')'           ; _Byte00   Set byte to 00 (Shift-0)
         ASC   '`'           ; _FlipByte Toggle all bits
@@ -968,8 +1395,7 @@ nKeys   = eKeys - aKeys     ;
 ; *Note*: Must match aKeys order!
 aFuncLo
         DB    <_Exit    -1  ; ESC
-        DB    <_Screen  -1  ; g
-        DB    <_Screen  -1  ; G
+        DB    <_Screen  -1  ; RET
 
         DB    <_MoveL   -1  ; <-
         DB    <_MoveR   -1  ; ->
@@ -978,7 +1404,8 @@ aFuncLo
         DB    <_EdgeL   -1  ; ^J
         DB    <_EdgeD   -1  ; ^K
         DB    <_EdgeR   -1  ; ^L
-        DB    <_Center  -1  ; RET
+        DB    <_Center  -1  ; ^G
+        DB    <_GotoXY  -1  ;  G
 
         DB    <_MoveU   -1  ; 'i'
         DB    <_MoveL   -1  ; 'j'
@@ -999,11 +1426,13 @@ aFuncLo
         DB    <_Bit6    -1  ; '7'
         DB    <_Bit7    -1  ; '8'
 
-    DO CONFIG_DHGR
-        DB    <_HighBit -1  ; SPC
-    ELSE
-        DB    <_HighBit -1  ; SPC
-    FIN
+        DB  <_SaveSprite-1  ; ';'
+        DB  <_LoadSprite-1  ; '''
+
+        DB <_ResetRegion-1  ; 'M'
+        DB <_MarkRegion -1  ; SPC
+;             <_HighBit -1  ; SPC
+
         DB    <_ByteFF  -1  ; '('
         DB    <_Byte00  -1  ; ')'
         DB    <_FlipByte-1  ; '`'
