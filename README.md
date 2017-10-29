@@ -13,6 +13,14 @@
 5. `BLOAD TUT.DHGR`
 6. `BRUN DHGR.BYTE`
 
+Ver 30.
+- Added beep for illegal keys
+- Added sprite info
+- Added version number in bottom right
+
+Ver 28.
+- Fixed hex input
+
 Ver 27.
 - Ripped out ROM output routines and replaced with native code for speed
 - Updated the status bar so that the saved bits and reverse bits are displayed
