@@ -6,7 +6,7 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ; DHGR Byte Inspector
 ; Michael Pohoreski
 ; https://github.com/Michaelangel007/apple2_hgrbyte/
-; Version 28
+; Version 30
 ;
 ; TL:DR;
 ;   IJKL to move
@@ -144,6 +144,8 @@ F8_Wait     = $FCA8
 
 cursor_row  = $E2   ; used by Applesoft HGR.row
 
+SPRITE_BASE = $6000
+zSpritePtr  = $F4   ; SPRITE: 16-bit poiter
 tempByte    = $F6   ; forward bits for pixel print
 aux_ptr     = $F7   ; copy of GBAS but points to HGR2 $40xx..$5Fxx
 lastkey     = $F9
@@ -187,9 +189,10 @@ __MAIN = $900
         ORG __MAIN
 
 DhgrByte
-        LDA #28             ; Version - copy HGR1 to aux, HGR2 to HGR1
+        LDA #30             ; Version - copy HGR1 to aux, HGR2 to HGR1
         JSR Init_Exit       ; FEATURE: Set to 00 if you don't want to copy AUX $2000 to MAIN $4000
-        BRA _Center
+        CLC
+        BCC _Center
 
 ; Funcs that JMP to GetByte before GotKey()
 ; Funcs that JMP to PutByte after  GotKey()
@@ -201,7 +204,8 @@ _Screen                     ; Toggle mixed/full screen
         LDA flags           ; FULL   MIX
         EOR #FLAG_FULL      ; mode is based on old leading edge
         STA flags           ; not new trailing edge
-        BRA FlashByte
+        CLC
+        BCC FlashByte
 ; --------------------
 _GotoXY         JMP OnGoto
 _ResetRegion    JMP OnResetRegion
@@ -242,50 +246,30 @@ _Center
         STA cursor_row      ; intentional fall into GetByte
 
 GetByte                     ; Cursor position changed
-        LDY #0              ; Update pointer to screen
-        LDX #0
         LDA cursor_row
-        JSR HPOSN           ; A=row, Y,X=col X->E0 Y->E1
-
-    DO CONFIG_DHGR
-; NOTE $4000 is our shadow copy of AUX ram
-        LDA GBASL
-        STA aux_ptr+0
-        LDA GBASH
-        AND #$1F
-        ORA #$40
-        STA aux_ptr+1
-    FIN
-
+        JSR GetHgrBaseAddr
         JSR GetCursorByte
 PutByte
         STA cursor_val      ; current value
         STA cursor_tmp      ; flashing cursor
+
 Status
         JSR DrawStatus
-;       STA SW_STORE80
+        BCC FlashByte       ; always -- See Note: [A]
+BadInput
+        JSR SoftBeep
 FlashByte
         JSR FlashCursorByte
 GetKey
         LDA KEYBOARD
         BPL FlashByte
-        STA KEYSTROBE
-        AND #$7F            ; Force ASCII
-        STA lastkey
-        CMP #'0'            ; key < '0'
-        BCC TestHex
-        CMP #'9'+1          ; key < '9'+1
-        BCC Nibble
-TestHex
-        CMP #'A'
-        BCC LoadKeys
-        CMP #'F'+1
-        BCC Nibble
+        JSR IsHexInput
+        BCS Nibble
 LoadKeys
         LDX #nKeys
 FindKey
         DEX
-        BMI FlashByte
+        BMI BadInput
         CMP aKeys, X
         BNE FindKey
 GotKey
@@ -380,7 +364,6 @@ _LoadByte
 Nibble
         LDA cursor_val
         JSR NibbleInput
-        LDA temp
         STA cursor_val
         CLC
         BCC GotoPutByte     ; always
@@ -462,12 +445,10 @@ ResetTimer
 
 GotoWaitKey
         JSR UpdateInputCursor
-
         LDA KEYBOARD
         BPL GotoWaitKey
-        STA KEYSTROBE
-        AND #$7F
-        STA lastkey
+        JSR IsHexInput
+        BCS GotoInputNib
 
 ; SPC = Move to next field, or accept if at Y
 ; CR  = Accept X or Accept X & Y
@@ -478,15 +459,6 @@ GotoWaitKey
         BEQ GotoInputAccept
         CMP gKeyGotoCancel      ; ESC
         BEQ GotoInputCancel
-
-        CMP #'0'
-        BCC GotoBadInput    ; Bad
-        CMP #'9'+1
-        BCC GotoInputNib    ; Good
-        CMP #'A'
-        BCC GotoBadInput    ; Bad
-        CMP #'F'+1
-        BCC GotoInputNib    ; Good
 
 ; ----------
 GotoBadInput
@@ -583,10 +555,6 @@ SetSprite1WH
         STA tSprite1 + SPRITE_H
         RTS
 
-;SetSprite1XY
-;SetSprite2XY
-;        RTS
-
 ; ---------
 OnMarkRegion
         LDA flags
@@ -648,6 +616,8 @@ SaveHeight
         STY tSprite1 + SPRITE_H
         BRA DoneSprite
 
+
+; --- Save Sprite ---
 OnSaveSprite
         LDA tSprite1 + SPRITE_W
         ORA tSprite1 + SPRITE_H
@@ -656,8 +626,114 @@ OnSaveSprite
         BRA DoneSprite
 ValidDimensions
 
+; Copy from interleaved memory to linear format
+        LDA gSprite1Y
+        STA gSpriteY
+        LDA gSprite1H
+        STA gSpriteH
+
+        LDX #>SPRITE_BASE
+        LDY #<SPRITE_BASE
+        STX zSpritePtr+1
+        STY zSpritePtr+0
+
+        LDX #0
+CopySpriteMeta
+        LDA tSprite1,X
+        JSR PutSpriteData
+        INX
+        CPX #tSprite2 - tSprite1
+        BNE CopySpriteMeta
+
+SaveRows
+; Y -> Source Address
+        LDA gSpriteY
+        JSR GetHgrBaseAddr
+
+        LDX gSprite1W
+        LDY gSprite1X       ; src col
+SaveCols
+        TYA
+        JSR GetCursorByteX
+        JSR PutSpriteData
+        INY
+        DEX
+        BNE SaveCols
+
+        INC gSpriteY
+        DEC gSpriteH
+        LDA gSpriteH
+        BNE SaveRows
+
+; Update Status with End-of-Byte address
+        LDX zSpritePtr+0
+        LDY zSpritePtr+1
+
+        STX gSprite1End+0
+        STY gSprite1End+1
+
+        STX gSprite1Len+0
+        STY gSprite1Len+1
+
+        SEC
+        LDA gSprite1Len+1
+        SBC #>SPRITE_BASE
+        STA gSprite1Len+1
+        LDA gSprite1Len+0
+        SBC #<SPRITE_BASE
+        STA gSprite1Len+0
+
+; Re-load the scanline addr
+        JMP GetByte
+
+; --- Save Sprite ---
 OnLoadSprite
-        BRA DoneSprite
+        JMP DoneSprite
+
+; --- Sprite ---
+PutSpriteData
+        PHY
+        LDY #0
+        STA (zSpritePtr),Y
+        DB  $A0             ; LDY #n -- skip next instruction
+GetSpriteData
+        PHY
+        LDY #0
+        LDA (zSpritePtr),Y
+IncSpriteData
+        INC zSpritePtr+0
+        BNE SamePage
+        INC zSpritePtr+1
+SamePage
+        PLY
+        RTS
+
+; OUT:
+;   C=1 Hex Input
+;   C=0 Non-hex
+; ----------
+IsHexInput
+        STA KEYSTROBE
+        AND #$7F
+        STA lastkey
+
+        CMP #'0'
+        BCC NotHex          ; Bad
+        CMP #'9'+1
+        BCC HaveHex         ; Good
+        CMP #'A'
+        BCC NotHex          ; Bad
+        CMP #'F'+1
+        BCC HaveHex         ; Good
+        CMP #'a'
+        BCC NotHex          ; Bad
+        CMP #'f'+1
+        BCC HaveHex         ; Good
+NotHex
+        RTS
+HaveHex
+        SEC
+        RTS
 
 ; --- Ripped from Fantavision ---
 SoftBeep
@@ -692,8 +768,7 @@ DrawStatus
         LDA cursor_row
         JSR PR_HEX
         JSR PrintSpace
-        LDA #'$'+$80
-        JSR COUT
+        JSR PrintDollar
         LDA GBASH
         JSR PR_HEX
         LDA cursor_col
@@ -778,11 +853,12 @@ PrintStatusLine2
         BCS HaveMainMem
 HaveAuxMem
         LDX #<sMemTypeBeg   ; src = &char[0][0]
+        LDY #>sMemTypeBeg
         BCC HaveMemType     ; always
 HaveMainMem
         LDX #<sMemTypeEnd   ; src = &char[1][0]
+        LDY #>sMemTypeEnd
 HaveMemType
-        LDY #>sMemTypeBeg
         JSR PrintStringZ
     FIN
 
@@ -867,11 +943,46 @@ PrintFooter2
         DEY                 ; len--
         BNE PrintFooter2
 
-; --- TODO --- sprite A$6000,L$####
+; sprite A$6000,L$####
+        LDA #41
+        JSR HTAB
+
+;        JSR PrintDollar
+;        LDA gSprite1End+1
+;        JSR PRBYTE
+;        LDA gSprite1End+0
+;        JSR PRBYTE
+;        JSR PrintSpace
+
+        LDA #'A'+$80
+        JSR COUT
+        JSR PrintDollar
+        LDA #>SPRITE_BASE
+		JSR PRBYTE
+        LDA #<SPRITE_BASE
+		JSR PRBYTE
+        LDA #$2C+$80        ; Merlin BUG #','
+        JSR COUT
+        LDA #'L'+$80
+        JSR COUT
+        JSR PrintDollar
+        LDA gSprite1Len+1
+        JSR PRBYTE
+        LDA gSprite1Len+0
+        JSR PRBYTE
+; Print Version in bottom right
+        LDA #77
+        JSR HTAB
+        LDA #'v'+$80
+        JSR COUT
+        LDA $901
+        JSR PRBYTE
+
+        CLC                 ; Note: [A] Skip SoftBeep
         RTS
 
 
-; IN:
+; IN: Address of Null Terminated String to Print
 ;   X=Lo
 ;   Y=Hi
 PrintStringZ
@@ -923,8 +1034,7 @@ PrintBitsReverse1
         DEX
         BNE PrintBitsReverse1
 
-        LDA #'$'+$80
-        JSR COUT
+        JSR PrintDollar
         PLA                 ; restore reverse byte
         JMP PRBYTE
 
@@ -964,6 +1074,27 @@ FlipBit
         EOR #$B0
         JMP COUT
 
+; IN:
+;  A=Y
+; OUT:
+;  $26,27 = HGR1 addr
+;  $F7,F8 = HGR2 addr
+GetHgrBaseAddr
+        LDY #0              ; Update pointer to screen
+        LDX #0
+        JSR HPOSN           ; A=row, Y,X=col X->E0 Y->E1
+
+    DO CONFIG_DHGR
+; NOTE $4000 is our shadow copy of AUX ram
+        LDA GBASL
+        STA aux_ptr+0
+        LDA GBASH
+        AND #$1F
+        ORA #$40
+        STA aux_ptr+1
+    FIN
+        RTS
+
 ; OUT:
 ;   A = byte
 ; USES:
@@ -976,6 +1107,10 @@ GetCursorByte               ; Main Aux
     ;   Odd  = Read Main
     DO CONFIG_DHGR
         LDA cursor_col
+; IN:
+;   Y = 80-column
+GetCursorByteX
+        PHY                 ; 65c02
         CLC
         ROR                 ; Aux/Main is interleaved
         TAY                 ; y = byte column
@@ -987,10 +1122,11 @@ _get_aux
 _get_main
     ELSE
         LDY cursor_col
+GetCursorByteX
     FIN
         LDA (GBASL),Y
 _get_val
-        STA cursor_val
+        PLY                 ; 65c02
         RTS
 
 FlashCursorByte
@@ -1049,6 +1185,10 @@ ClearTextPage
         CPY #$78
         BNE ClearTextPage
         RTS
+
+PrintDollar
+        LDA #'$'+$80
+        BNE COUT
 PR_HEX
         PHA
         LDA #'=' + $80      ; normal
@@ -1227,9 +1367,8 @@ VTAB_COL0
 HTAB00
         LDA #0
 HTAB
-        STA CH
+;       STA CH
         STA CH80
-
         RTS
 
 ; ------------------------------------------------------------------------
@@ -1270,14 +1409,14 @@ gKeyGotoAccept      DB  'M' & $1F   ; RET
 
 ; ========================================================================
 ; === Status ===
-    ;                1         2         3
-    ;      0123456789012345678901234567890123456789
+    ;                1         2         3         4         5         6         7
+    ;      0123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789
     ;                      1               2
     ;      0123456789ABCDEF0123456789ABCDEF01234567
     ;     "X=## Y=## $=####:## %%%%%%%%~%%%%%%%%$00  X1:## Y1:##
     ;     "/=## A/M    SAVE:?? %%%%%%%%~%%%%%%%%$00  X2:## Y2:##
     ;     "                    76543210 12345678     W :## H :##
-    ;     "                             [11]222-
+    ;     "                             [11]222-    A$####,L$####                       v??
 sTextSprite1 ASC "X1:?? Y1:??",00
 sTextSprite2 ASC "X2:?? Y2:??",00
 sTextSprite3 ASC " W:??  H:??",00
@@ -1324,13 +1463,19 @@ sPixelFooter
 ; X,Y
 ; W,H
 tSprite1
-    DB 0, 0
-    DB 0, 0
+gSprite1X   DB 0
+gSprite1Y   DB 0
+gSprite1W   DB 0
+gSprite1H   DB 0
+gSprite1End DW 0
+gSprite1Len DW 0
+
 tSprite2
-    DB 0, 0
-    DB 0, 0
-
-
+            DB 0, 0
+            DB 0, 0
+gSpriteY    DB 0
+gSpriteW    DB 0            ; temp - for copy
+gSpriteH    DB 0            ; temp - for copy
 
 ; ------------------------------------------------------------------------
 ; Keys are searched in reverse order
