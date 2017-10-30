@@ -13,6 +13,10 @@
 5. `BLOAD TUT.DHGR`
 6. `BRUN DHGR.BYTE`
 
+Ver 31.
+- Added `:` to save a sprite to mem
+- Added `;` to copy a sprite from to the DHGR screen
+
 Ver 30.
 - Added beep for illegal keys
 - Added sprite info

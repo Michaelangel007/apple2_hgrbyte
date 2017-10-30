@@ -6,7 +6,7 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ; DHGR Byte Inspector
 ; Michael Pohoreski
 ; https://github.com/Michaelangel007/apple2_hgrbyte/
-; Version 30
+; Version 31
 ;
 ; TL:DR;
 ;   IJKL to move
@@ -189,7 +189,7 @@ __MAIN = $900
         ORG __MAIN
 
 DhgrByte
-        LDA #30             ; Version - copy HGR1 to aux, HGR2 to HGR1
+        LDA #31             ; Version - copy HGR1 to aux, HGR2 to HGR1
         JSR Init_Exit       ; FEATURE: Set to 00 if you don't want to copy AUX $2000 to MAIN $4000
         CLC
         BCC _Center
@@ -537,10 +537,10 @@ GotoInputCancel
 ; ------------------------------------------------------------------------
 OnResetRegion
         JSR ZeroRegion
-        STA tSprite1 + SPRITE_X
-        STA tSprite1 + SPRITE_Y
-        STA tSprite2 + SPRITE_X
-        STA tSprite2 + SPRITE_Y
+        STA gSprite1X
+        STA gSprite1Y
+        STA gSprite2X
+        STA gSprite2Y
 
         LDA flags
         AND #$FF - {FLAG_REGION_1 + FLAG_REGION_2 + FLAG_REG_EVEN}
@@ -551,8 +551,8 @@ RegionTrampoline1
 ZeroRegion
         LDA #0
 SetSprite1WH
-        STA tSprite1 + SPRITE_W
-        STA tSprite1 + SPRITE_H
+        STA gSprite1W
+        STA gSprite1H
         RTS
 
 ; ---------
@@ -579,8 +579,8 @@ NoRegion1
         STA flags
         LDX cursor_col
         LDY cursor_row
-        STX tSprite1 + SPRITE_X
-        STY tSprite1 + SPRITE_Y
+        STX gSprite1X
+        STY gSprite1Y
 DoneSprite
         JMP Status
 
@@ -590,40 +590,44 @@ NoRegion2
         STA flags
         LDX cursor_col
         LDY cursor_row
-        STX tSprite2 + SPRITE_X
-        STY tSprite2 + SPRITE_Y
+        STX gSprite2X
+        STY gSprite2Y
 
 CalcWidth
         TXA
         SEC
-        SBC tSprite1 + SPRITE_X
+        SBC gSprite1X
         BCS SaveWidth
         EOR #$FF
 SaveWidth
         TAX
         INX
-        STX tSprite1 + SPRITE_W
+        STX gSprite1W
 
 CalcHeight
         TYA
         SEC
-        SBC tSprite1 + SPRITE_Y
+        SBC gSprite1Y
         BCS SaveHeight
         EOR #$FF
 SaveHeight
         TAY
         INY
-        STY tSprite1 + SPRITE_H
+        STY gSprite1H
         BRA DoneSprite
 
+SetSpriteBase
+        LDX #>SPRITE_BASE
+        LDY #<SPRITE_BASE
+        STX zSpritePtr+1
+        STY zSpritePtr+0
+        RTS
 
 ; --- Save Sprite ---
 OnSaveSprite
-        LDA tSprite1 + SPRITE_W
-        ORA tSprite1 + SPRITE_H
-        BNE ValidDimensions
-        JSR SoftBeep
-        BRA DoneSprite
+        LDA gSprite1W
+        ORA gSprite1H
+        BEQ InvalidSprite   ; v- Below
 ValidDimensions
 
 ; Copy from interleaved memory to linear format
@@ -632,17 +636,14 @@ ValidDimensions
         LDA gSprite1H
         STA gSpriteH
 
-        LDX #>SPRITE_BASE
-        LDY #<SPRITE_BASE
-        STX zSpritePtr+1
-        STY zSpritePtr+0
+        JSR SetSpriteBase
 
         LDX #0
 CopySpriteMeta
-        LDA tSprite1,X
+        LDA gSprite1X,X
         JSR PutSpriteData
         INX
-        CPX #tSprite2 - tSprite1
+        CPX #1 + gSprite1H - gSprite1X ; X,Y,W,H
         BNE CopySpriteMeta
 
 SaveRows
@@ -686,9 +687,60 @@ SaveCols
 ; Re-load the scanline addr
         JMP GetByte
 
+; ----------
+InvalidSprite
+        JMP BadInput
+;        JSR SoftBeep
+;        BRA DoneSprite
+; ----------
+
 ; --- Save Sprite ---
 OnLoadSprite
-        JMP DoneSprite
+        JSR SetSpriteBase
+
+        JSR GetSpriteData   ; skip X
+        JSR GetSpriteData   ; skip Y
+
+        JSR GetSpriteData   ; get W
+        CMP #0
+        BEQ InvalidSprite
+        STA gSpriteW
+        CLC
+        ADC cursor_col
+        STA gSpriteX2       ; end col
+
+        JSR GetSpriteData   ; get H
+        CMP #0
+        BEQ InvalidSprite
+        STA gSpriteH
+
+        LDA cursor_row
+        STA gSpriteY
+
+LoadRows
+; Y -> Source Address
+        LDA gSpriteY
+        JSR GetHgrBaseAddr
+
+        LDA cursor_col
+        STA gSpriteX
+LoadCols
+        JSR GetSpriteData
+        TAX
+        LDA gSpriteX
+        JSR PutCursorByteX  ; X=Byte, A=Col
+
+        INC gSpriteX
+        LDA gSpriteX
+        CMP gSpriteX2
+        BNE LoadCols
+
+        INC gSpriteY
+        DEC gSpriteH
+        LDA gSpriteH
+        BNE LoadRows
+
+        JMP GetByte
 
 ; --- Sprite ---
 PutSpriteData
@@ -794,11 +846,11 @@ DrawStatus
         AND #FLAG_REGION_1
         BEQ PrintNoRegion1
 
-        LDA tSprite1 + SPRITE_X
+        LDA gSprite1X
         LDX #'X'+$80
         LDY #'1'+$80
         JSR PrintSpriteMeta
-        LDA tSprite1 + SPRITE_Y
+        LDA gSprite1Y
         LDX #'Y'+$80
         LDY #'1'+$80
         JSR PrintSpriteMeta
@@ -882,11 +934,11 @@ HaveMemType
         AND #FLAG_REGION_2
         BEQ PrintNoRegion2
 
-        LDA tSprite2 + SPRITE_X
+        LDA gSprite2X
         LDX #'X'+$80
         LDY #'2'+$80
         JSR PrintSpriteMeta
-        LDA tSprite2 + SPRITE_Y
+        LDA gSprite2Y
         LDX #'Y'+$80
         LDY #'2'+$80
         JMP PrintSpriteMeta
@@ -909,11 +961,11 @@ PrintStatusLine3
         LDY #>sTextFooter3
         JSR PrintStringZ
 
-        LDA tSprite1 + SPRITE_W
+        LDA gSprite1W
         LDX #' '+$80
         LDY #'W'+$80
         JSR PrintSpriteMeta
-        LDA tSprite1 + SPRITE_H
+        LDA gSprite1H
         LDX #' '+$80
         LDY #'H'+$80
         JSR PrintSpriteMeta
@@ -1145,6 +1197,9 @@ SetCursorByte
         TAX                 ; push byte
 
         LDA cursor_col
+; X = Byte
+; A = Col
+PutCursorByteX
         CLC
         ROR
         TAY
@@ -1157,6 +1212,9 @@ SetCursorByte
 _set_main
     ELSE
         LDY cursor_col
+; A = Byte
+; Y = Column
+PutCursorByteX
     FIN
         STA (GBASL),Y       ; Write to AUX or MAIN
         STA SW_AUXWROFF     ; Write MAIN
@@ -1462,20 +1520,23 @@ sPixelFooter
 ; === Sprite/Region ===
 ; X,Y
 ; W,H
-tSprite1
 gSprite1X   DB 0
 gSprite1Y   DB 0
 gSprite1W   DB 0
 gSprite1H   DB 0
+
 gSprite1End DW 0
 gSprite1Len DW 0
 
-tSprite2
-            DB 0, 0
-            DB 0, 0
+gSprite2X   DB 0    ; W = 2X - 1X + 1
+gSprite2Y   DB 0    ; H = 2Y - 1Y + 1
+
+gSpriteX    DB 0            ; temp - for copying
 gSpriteY    DB 0
-gSpriteW    DB 0            ; temp - for copy
-gSpriteH    DB 0            ; temp - for copy
+gSpriteW    DB 0            ; temp - for copying
+gSpriteH    DB 0            ; temp - for copying
+gSpriteX2   DB 0
+gSpriteY2   DB 0
 
 ; ------------------------------------------------------------------------
 ; Keys are searched in reverse order
@@ -1513,8 +1574,8 @@ aKeys
         ASC   '&'           ; _Bit6     Toggle bit 6
         ASC   '*'           ; _Bit7     Toggle bit 7
 
-        ASC   ';'           ; _SaveSprite
-        DB    "'" & $3F     ; _LoadSprite
+        ASC   ':'           ; _SaveSprite  :
+        ASC   ';'           ; _LoadSprite  ;
 
         ASC   'M'           ; _ResetRegion
         ASC   ' '           ; _MarkRegion   Changed from Toggle high bit of byte (bit 7) is useless in DHGR mode
