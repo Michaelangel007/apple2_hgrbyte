@@ -720,7 +720,7 @@ OnLoadSprite
 LoadRows
 ; Y -> Source Address
         LDA gSpriteY
-        JSR GetHgrBaseAddr
+        JSR GetHgrBaseAddr  ; cursor_row is updated -> HPOSN
 
         LDA cursor_col
         STA gSpriteX
@@ -1129,6 +1129,8 @@ FlipBit
 ; IN:
 ;  A=Y
 ; OUT:
+;  $E0,E1 = 0..279 x (column)
+;  $E2    = y (row)
 ;  $26,27 = HGR1 addr
 ;  $F7,F8 = HGR2 addr
 GetHgrBaseAddr
@@ -1141,8 +1143,8 @@ GetHgrBaseAddr
         LDA GBASL
         STA aux_ptr+0
         LDA GBASH
-        AND #$1F
-        ORA #$40
+        AND #$1F            ; stripe page 1
+        ORA #$40            ; set to page 2
         STA aux_ptr+1
     FIN
         RTS
