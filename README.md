@@ -4,6 +4,7 @@
 ![dhgr byte inspector screenshot](screenshots/dhgrbyte.png?raw=true)
 ![view screenshot](screenshots/viewdhgr.png?raw=true)
 
+
 # Instructions
 
 1. Start AppleWin
@@ -11,7 +12,13 @@
 3. Open: `hgrbyte.dsk`
 4. Select BASIC.SYSTEM
 5. `BLOAD TUT.DHGR`
-6. `BRUN DHGR.BYTE`
+6. `-DHGR.BYTE`
+
+
+# History
+
+Ver 32.
+- Fixed bug: Restore cursor position after when using sprite copy
 
 Ver 31.
 - Added `:` to save a sprite to mem

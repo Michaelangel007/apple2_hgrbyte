@@ -6,7 +6,7 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ; DHGR Byte Inspector
 ; Michael Pohoreski
 ; https://github.com/Michaelangel007/apple2_hgrbyte/
-; Version 31
+; Version 32
 ;
 ; TL:DR;
 ;   IJKL to move
@@ -189,7 +189,7 @@ __MAIN = $900
         ORG __MAIN
 
 DhgrByte
-        LDA #31             ; Version - copy HGR1 to aux, HGR2 to HGR1
+        LDA #32             ; Version - copy HGR1 to aux, HGR2 to HGR1
         JSR Init_Exit       ; FEATURE: Set to 00 if you don't want to copy AUX $2000 to MAIN $4000
         CLC
         BCC _Center
@@ -716,6 +716,7 @@ OnLoadSprite
 
         LDA cursor_row
         STA gSpriteY
+        STA temp            ; saved cursor_row since HPOSN updates it
 
 LoadRows
 ; Y -> Source Address
@@ -740,6 +741,8 @@ LoadCols
         LDA gSpriteH
         BNE LoadRows
 
+        LDA temp            ; move cursor back up to the original location
+        STA cursor_row      ; before we were called
         JMP GetByte
 
 ; --- Sprite ---
