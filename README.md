@@ -148,7 +148,7 @@ Memory order is:
 
 To view without the editor you'll need a [DHGR Viewer](src/dhgr.view.s)
 
-Also included is `squirt` -- a File Manager.
+Also included is `squirt` -- a File Manager has a DHGR previewer built-in.
 
 
 # Tutankhamun
