@@ -21,8 +21,10 @@ Ver 32.
 - Fixed bug: Restore cursor position after when using sprite copy
 
 Ver 31.
-- Added `:` to save a sprite to mem
+- Added `:` to save a sprite to memory from the DHGR screen
 - Added `;` to copy a sprite from to the DHGR screen
+- Added `SPACE` to toggle sprite top left or bottom right corners
+- Added `M` to reset sprite bounding box
 
 Ver 30.
 - Added beep for illegal keys
