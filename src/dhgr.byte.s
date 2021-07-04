@@ -48,7 +48,7 @@ CONFIG_BIOS = 0 ; 1=Use slow ROM for text, 0=Use native code for COUT, HOME
 ;   &     Toggle bit 6
 ;   *     Toggle bit 7 (high bit)
 ;
-;   SPC   Toggle bebin/end sprite region
+;   SPC   Toggle begin/end sprite region
 ;   M     Reset region to none
 ;
 ;   (     Set   byte to $FF (Shift-9)
