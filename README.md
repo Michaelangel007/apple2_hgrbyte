@@ -132,8 +132,8 @@ Ver 27.
 270 A=A+1
 280 A = A-P: X=M(B3):GOSUB 2
 290 NEXT:RETURN
-900 REM DHGR 16-colors 
-900 REM $00,$04,$44,$4C,$22,$2A,$http://wsxyz.net/tohgr.html66,$6E
+900 REM DHGR: 16 colors
+900 REM $00,$04,$44,$4C,$22,$2A,$66,$6E
 901 REM $11,$19,$55,$5D,$33,$3B,$77,$7F
 902 DATA 0,68
 903 DATA 34,102
